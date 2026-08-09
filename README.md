@@ -10,6 +10,11 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+
+
+or
+
+source ./setup_venv.sh
 ```
 
 Windows PowerShell:
