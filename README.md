@@ -1,2 +1,41 @@
-# forecasting
-Set of common forecasting methods for different data types, periodicity, and seasonality using python. 
+
+## Install
+
+Python 3.12 is recommended.
+
+macOS or Linux:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Windows PowerShell:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+## Inspect a CSV
+
+Running without column selections prints a profile of the available columns:
+
+```bash
+python main.py src/tests/test_data/test_data_1.csv
+```
+
+## Run the quarterly static forecast
+
+```bash
+python main.py src/tests/test_data/test_data_1.csv \
+  --period-column period_t \
+  --demand-column demand_dt \
+  --output output/static_forecast.csv \
+  --plot output/static_forecast.png
+```
+
