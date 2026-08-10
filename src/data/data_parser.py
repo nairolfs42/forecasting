@@ -49,25 +49,48 @@ def profile_columns(data: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(profiles)
 
 
-def select_forecast_columns(data: pd.DataFrame,*,period_column: str,demand_column: str,) -> pd.DataFrame:
-    """Select, validate, and normalize the chosen columns."""
-    missing = [
-        column
-        for column in (period_column, demand_column)
-        if column not in data.columns
-    ]
+def select_forecast_columns(
+    data: pd.DataFrame,
+    *,
+    period_column: str | None = None,
+    demand_column: str,
+) -> pd.DataFrame:
+    """Select and normalize forecasting columns.
+
+    When ``period_column`` is omitted, CSV row order is treated as chronological
+    order and one-based periods are generated as ``1..n``.
+    """
+    requested_columns = [demand_column]
+    if period_column:
+        requested_columns.append(period_column)
+    missing = [column for column in requested_columns if column not in data.columns]
     if missing:
         raise ValueError(f"selected columns not found: {missing}")
-    if period_column == demand_column:
+    if period_column and period_column == demand_column:
         raise ValueError("period and demand must use different columns")
 
-    selected = data[[period_column, demand_column]].copy()
-    selected.columns = ["period", "demand"]
-    if selected["period"].isna().any():
-        raise ValueError("period column contains missing values")
-    if selected["period"].duplicated().any():
-        duplicates = selected.loc[selected["period"].duplicated(), "period"].tolist()
-        raise ValueError(f"period column contains duplicates: {duplicates[:5]}")
+    if period_column:
+        selected = data[[period_column, demand_column]].copy()
+        selected.columns = ["period", "demand"]
+        if selected["period"].isna().any():
+            raise ValueError("period column contains missing values")
+        if selected["period"].duplicated().any():
+            duplicates = selected.loc[
+                selected["period"].duplicated(), "period"
+            ].tolist()
+            raise ValueError(f"period column contains duplicates: {duplicates[:5]}")
+
+        numeric_periods = pd.to_numeric(selected["period"], errors="coerce")
+        if numeric_periods.notna().all():
+            selected["period"] = numeric_periods
+        selected = selected.sort_values("period", kind="stable").reset_index(drop=True)
+    else:
+        selected = pd.DataFrame(
+            {
+                "period": range(1, len(data) + 1),
+                "demand": data[demand_column].to_numpy(copy=True),
+            }
+        )
 
     selected["demand"] = _parse_numeric(selected["demand"], raise_on_invalid=True)
     if selected["demand"].isna().any():
@@ -75,11 +98,6 @@ def select_forecast_columns(data: pd.DataFrame,*,period_column: str,demand_colum
     if (selected["demand"] < 0).any():
         raise ValueError("demand values must be non-negative for this proof of concept")
 
-    numeric_periods = pd.to_numeric(selected["period"], errors="coerce")
-    if numeric_periods.notna().all():
-        selected["period"] = numeric_periods
-
-    selected = selected.sort_values("period", kind="stable").reset_index(drop=True)
     return selected
 
 

@@ -114,8 +114,8 @@ def _validate_static_input(
         raise ValueError("horizon must be at least 1")
     if len(data) < periodicity * 2:
         raise ValueError("static forecasting requires at least two seasonal cycles")
-    if len(data) % periodicity != 0:
-        raise ValueError("static forecasting currently requires complete seasonal cycles")
+    #if len(data) % periodicity != 0:
+    #    raise ValueError("static forecasting currently requires complete seasonal cycles")
     if data["demand"].isna().any():
         raise ValueError("demand contains missing values")
 

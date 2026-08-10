@@ -16,6 +16,7 @@ BACKGROUND = "#bd7fa2"
 PANEL_BACKGROUND = "#19dfe3"
 CONTROL_BACKGROUND = "#d6e7f5"
 ACTION_BACKGROUND = "#fff400"
+ROW_ORDER_OPTION = "Use CSV row order (1, 2, 3, ...)"
 
 
 class ForecastingApp(tk.Tk):
@@ -220,7 +221,7 @@ class ForecastingApp(tk.Tk):
 
         ttk.Label(
             period_frame,
-            text="Select period column",
+            text="Period column (optional)",
             style="Control.TLabel",
         ).pack(anchor="w")
         self.period_column_box = ttk.Combobox(
@@ -303,8 +304,9 @@ class ForecastingApp(tk.Tk):
         selected = filedialog.asksaveasfilename(
             parent=self,
             title="Save forecast DataFrame",
+            initialfile="forecast_csv",
             defaultextension=".csv",
-            filetypes=(("CSV files", "*.csv"),),
+            filetypes=[("CSV files", "*.csv")]
         )
         if selected:
             self.app_state.output_csv_path = Path(selected)
@@ -314,8 +316,9 @@ class ForecastingApp(tk.Tk):
         selected = filedialog.asksaveasfilename(
             parent=self,
             title="Save forecast chart",
+            initialfile="forecast_graph",
             defaultextension=".png",
-            filetypes=(("PNG image", "*.png"),),
+            filetypes=[("PNG image", "*.png")]
         )
         if selected:
             self.app_state.plot_path = Path(selected)
@@ -329,10 +332,14 @@ class ForecastingApp(tk.Tk):
             self._show_error("The selected forecasting method is not available yet.")
             return
 
-        period_column = self.period_column_var.get().strip()
+        period_selection = self.period_column_var.get().strip()
+        period_column = (
+            None if not period_selection or period_selection == ROW_ORDER_OPTION
+            else period_selection
+        )
         demand_column = self.demand_column_var.get().strip()
-        if not period_column or not demand_column:
-            self._show_error("Select both the period and demand columns.")
+        if not demand_column:
+            self._show_error("Select a demand column.")
             return
 
         try:
@@ -392,19 +399,15 @@ class ForecastingApp(tk.Tk):
 
     def _configure_column_selectors(self, columns: list[object]) -> None:
         column_names = [str(column) for column in columns]
-        self.period_column_box.configure(values=column_names, state="readonly")
-        self.demand_column_box.configure(values=column_names, state="readonly")
-        self.period_column_var.set(
-            self._suggest_column(column_names, ("period", "date", "time", "quarter"))
+        self.period_column_box.configure(
+            values=[ROW_ORDER_OPTION, *column_names],
+            state="readonly",
         )
+        self.demand_column_box.configure(values=column_names, state="readonly")
+        self.period_column_var.set(ROW_ORDER_OPTION)
         self.demand_column_var.set(
             self._suggest_column(column_names, ("demand", "sales", "volume", "value"))
         )
-        if self.demand_column_var.get() == self.period_column_var.get():
-            alternatives = [
-                column for column in column_names if column != self.period_column_var.get()
-            ]
-            self.demand_column_var.set(alternatives[0] if alternatives else "")
 
     def _disable_column_selectors(self) -> None:
         self.period_column_var.set("")
