@@ -44,3 +44,15 @@ python main.py test_data/test_data_1.csv \
   --plot output/static_forecast.png
 ```
 
+## Run the local graphical application
+
+After activating the virtual environment and installing `requirements.txt`, run:
+
+```bash
+python main_gui.py
+```
+
+The Tkinter application can load a CSV, select period and demand columns, run
+the static forecast, preview the resulting DataFrame, and optionally save the
+result CSV and forecast chart. The original `main.py` command-line interface
+remains available and unchanged.
