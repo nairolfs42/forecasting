@@ -14,7 +14,7 @@ python -m pip install -r requirements.txt
 
 or
 
-source ./setup_venv.sh
+source ./setup.sh
 ```
 
 Windows PowerShell:
