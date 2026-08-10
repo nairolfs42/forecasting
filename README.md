@@ -31,13 +31,13 @@ python -m pip install -r requirements.txt
 Running without column selections prints a profile of the available columns:
 
 ```bash
-python main.py src/tests/test_data/test_data_1.csv
+python main.py test_data/test_data_1.csv
 ```
 
-## Run the quarterly static forecast
+## Run a sample quarterly static forecast
 
 ```bash
-python main.py src/tests/test_data/test_data_1.csv \
+python main.py test_data/test_data_1.csv \
   --period-column period_t \
   --demand-column demand_dt \
   --output output/static_forecast.csv \
