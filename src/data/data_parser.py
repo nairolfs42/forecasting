@@ -1,7 +1,25 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+
 import pandas as pd
+
+
+NEGATIVE_POLICY_NET = "net"
+NEGATIVE_POLICY_ZERO = "zero"
+
+
+@dataclass(frozen=True)
+class RawAggregationResult:
+    """Quarterly data plus details about raw-transaction normalization."""
+
+    data: pd.DataFrame
+    transaction_count: int
+    negative_count: int
+    negative_total: float
+    missing_quarters_filled: int
+    negative_policy: str
 
 
 def load_csv(path: str | Path) -> pd.DataFrame:
@@ -96,12 +114,101 @@ def select_forecast_columns(
     if selected["demand"].isna().any():
         raise ValueError("demand column contains missing values")
     if (selected["demand"] < 0).any():
-        raise ValueError("demand values must be non-negative for this proof of concept")
+        raise ValueError("demand values must be non-negative for this version of the static forecast")
 
     return selected
 
 
-def _parse_numeric(series: pd.Series, *, raise_on_invalid: bool) -> pd.Series:
+def aggregate_raw_quarterly_data(
+    data: pd.DataFrame,
+    *,
+    date_column: str,
+    amount_column: str,
+    negative_policy: str = NEGATIVE_POLICY_NET,
+) -> RawAggregationResult:
+    """Normalize raw transactions and aggregate them into calendar quarters.
+
+    Net aggregation keeps negative refunds and cancellations in their quarter.
+    The zero policy is an explicit gross-demand override that removes negative
+    transactions before aggregation.
+    """
+    requested_columns = [date_column, amount_column]
+    missing = [column for column in requested_columns if column not in data.columns]
+    if missing:
+        raise ValueError(f"selected raw-data columns not found: {missing}")
+    if date_column == amount_column:
+        raise ValueError("transaction date and amount must use different columns")
+    if negative_policy not in {NEGATIVE_POLICY_NET, NEGATIVE_POLICY_ZERO}:
+        raise ValueError(f"unknown negative-value policy: {negative_policy}")
+
+    source_dates = data[date_column]
+    dates = pd.to_datetime(source_dates, errors="coerce", format="mixed")
+    invalid_dates = source_dates.notna() & dates.isna()
+    if invalid_dates.any():
+        examples = source_dates.loc[invalid_dates].astype(str).head(5).tolist()
+        raise ValueError(
+            f"transaction date column contains invalid dates: {examples}"
+        )
+    if dates.isna().any():
+        raise ValueError("transaction date column contains missing values")
+
+    amounts = _parse_numeric(
+        data[amount_column],
+        raise_on_invalid=True,
+        field_name="transaction amount",
+    )
+    if amounts.isna().any():
+        raise ValueError("transaction amount column contains missing values")
+
+    negative_mask = amounts < 0
+    negative_count = int(negative_mask.sum())
+    negative_total = float(amounts.loc[negative_mask].sum())
+    amounts_for_aggregation = amounts
+    if negative_policy == NEGATIVE_POLICY_ZERO:
+        amounts_for_aggregation = amounts.clip(lower=0.0)
+
+    transaction_quarters = dates.dt.to_period("Q")
+    quarterly_totals = amounts_for_aggregation.groupby(
+        transaction_quarters, sort=True
+    ).sum()
+    first_quarter = transaction_quarters.min()
+    last_quarter = transaction_quarters.max()
+    all_quarters = pd.period_range(first_quarter, last_quarter, freq="Q")
+    missing_quarters_filled = int(len(all_quarters.difference(quarterly_totals.index)))
+    quarterly_totals = quarterly_totals.reindex(all_quarters, fill_value=0.0)
+
+    if negative_policy == NEGATIVE_POLICY_NET and (quarterly_totals < 0).any():
+        negative_quarters = [
+            str(period) for period in quarterly_totals.index[quarterly_totals < 0]
+        ]
+        raise ValueError(
+            "net aggregation produced negative quarterly demand for "
+            f"{negative_quarters[:5]}. Review those transactions or use the "
+            "acknowledged zero-conversion override."
+        )
+
+    quarterly_data = pd.DataFrame(
+        {
+            "period": all_quarters,
+            "demand": quarterly_totals.to_numpy(dtype=float),
+        }
+    )
+    return RawAggregationResult(
+        data=quarterly_data,
+        transaction_count=len(data),
+        negative_count=negative_count,
+        negative_total=negative_total,
+        missing_quarters_filled=missing_quarters_filled,
+        negative_policy=negative_policy,
+    )
+
+
+def _parse_numeric(
+    series: pd.Series,
+    *,
+    raise_on_invalid: bool,
+    field_name: str = "demand",
+) -> pd.Series:
     if pd.api.types.is_numeric_dtype(series):
         return pd.to_numeric(series, errors="coerce").astype(float)
 
@@ -116,5 +223,5 @@ def _parse_numeric(series: pd.Series, *, raise_on_invalid: bool) -> pd.Series:
     invalid = series.notna() & parsed.isna()
     if raise_on_invalid and invalid.any():
         examples = series.loc[invalid].astype(str).head(5).tolist()
-        raise ValueError(f"demand column contains non-numeric values: {examples}")
+        raise ValueError(f"{field_name} column contains non-numeric values: {examples}")
     return parsed

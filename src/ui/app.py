@@ -7,7 +7,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from src.algorithms.forecasts import fit_static_forecast
-from src.data.data_parser import load_csv, select_forecast_columns
+from src.data.data_parser import (
+    NEGATIVE_POLICY_NET,
+    NEGATIVE_POLICY_ZERO,
+    RawAggregationResult,
+    aggregate_raw_quarterly_data,
+    load_csv,
+    select_forecast_columns,
+)
 from src.ui.data_table import DataFrameTable
 from src.ui.state import AppState
 
@@ -17,6 +24,8 @@ PANEL_BACKGROUND = "#19dfe3"
 CONTROL_BACKGROUND = "#d6e7f5"
 ACTION_BACKGROUND = "#fff400"
 ROW_ORDER_OPTION = "Use CSV row order (1, 2, 3, ...)"
+AGGREGATED_DATA_MODE = "Already aggregated data"
+RAW_DATA_MODE = "Raw transaction data"
 
 
 class ForecastingApp(tk.Tk):
@@ -29,6 +38,8 @@ class ForecastingApp(tk.Tk):
 
         self.app_state = AppState()
         self.method_var = tk.StringVar(value="Static forecast")
+        self.data_mode_var = tk.StringVar(value=AGGREGATED_DATA_MODE)
+        self.negative_policy_var = tk.StringVar(value=NEGATIVE_POLICY_NET)
         self.periodicity_var = tk.StringVar(value="4")
         self.horizon_var = tk.StringVar(value="4")
         self.period_column_var = tk.StringVar()
@@ -135,6 +146,38 @@ class ForecastingApp(tk.Tk):
             values=("Static forecast",),
         )
 
+        data_mode_box = self._labeled_combobox(
+            parent,
+            "Select data structure",
+            self.data_mode_var,
+            values=(AGGREGATED_DATA_MODE, RAW_DATA_MODE),
+        )
+        data_mode_box.bind("<<ComboboxSelected>>", self._on_data_mode_changed)
+
+        self.raw_options_container = ttk.Frame(parent, style="Controls.TFrame")
+        self.raw_options_container.pack(fill="x")
+        self.raw_options_content = ttk.Frame(
+            self.raw_options_container,
+            style="Controls.TFrame",
+        )
+        ttk.Label(
+            self.raw_options_content,
+            text="Negative transaction handling",
+            style="Control.TLabel",
+        ).pack(anchor="w")
+        ttk.Radiobutton(
+            self.raw_options_content,
+            text="Net quarterly totals (recommended)",
+            variable=self.negative_policy_var,
+            value=NEGATIVE_POLICY_NET,
+        ).pack(anchor="w", pady=(3, 0))
+        ttk.Radiobutton(
+            self.raw_options_content,
+            text="Set negatives to zero (gross totals; confirmation required)",
+            variable=self.negative_policy_var,
+            value=NEGATIVE_POLICY_ZERO,
+        ).pack(anchor="w")
+
         ttk.Label(parent, text="Select periodicity", style="Control.TLabel").pack(
             anchor="w"
         )
@@ -219,11 +262,12 @@ class ForecastingApp(tk.Tk):
         demand_frame = ttk.Frame(selectors, style="Controls.TFrame")
         demand_frame.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
-        ttk.Label(
+        self.period_column_label = ttk.Label(
             period_frame,
             text="Period column (optional)",
             style="Control.TLabel",
-        ).pack(anchor="w")
+        )
+        self.period_column_label.pack(anchor="w")
         self.period_column_box = ttk.Combobox(
             period_frame,
             textvariable=self.period_column_var,
@@ -231,11 +275,12 @@ class ForecastingApp(tk.Tk):
         )
         self.period_column_box.pack(fill="x", pady=(3, 0))
 
-        ttk.Label(
+        self.demand_column_label = ttk.Label(
             demand_frame,
             text="Select demand column",
             style="Control.TLabel",
-        ).pack(anchor="w")
+        )
+        self.demand_column_label.pack(anchor="w")
         self.demand_column_box = ttk.Combobox(
             demand_frame,
             textvariable=self.demand_column_var,
@@ -332,14 +377,15 @@ class ForecastingApp(tk.Tk):
             self._show_error("The selected forecasting method is not available yet.")
             return
 
-        period_selection = self.period_column_var.get().strip()
-        period_column = (
-            None if not period_selection or period_selection == ROW_ORDER_OPTION
-            else period_selection
-        )
-        demand_column = self.demand_column_var.get().strip()
-        if not demand_column:
-            self._show_error("Select a demand column.")
+        first_column = self.period_column_var.get().strip()
+        second_column = self.demand_column_var.get().strip()
+        raw_mode = self.data_mode_var.get() == RAW_DATA_MODE
+        if raw_mode and not first_column:
+            self._show_error("Select a transaction date column.")
+            return
+        if not second_column:
+            label = "transaction amount" if raw_mode else "demand"
+            self._show_error(f"Select a {label} column.")
             return
 
         try:
@@ -351,11 +397,50 @@ class ForecastingApp(tk.Tk):
 
         self._set_busy(True, "Calculating static forecast...")
         try:
-            selected_data = select_forecast_columns(
-                self.app_state.raw_data,
-                period_column=period_column,
-                demand_column=demand_column,
-            )
+            aggregation: RawAggregationResult | None = None
+            if raw_mode:
+                aggregation = aggregate_raw_quarterly_data(
+                    self.app_state.raw_data,
+                    date_column=first_column,
+                    amount_column=second_column,
+                    negative_policy=self.negative_policy_var.get(),
+                )
+                if (
+                    aggregation.negative_policy == NEGATIVE_POLICY_ZERO
+                    and aggregation.negative_count
+                ):
+                    confirmed = messagebox.askyesno(
+                        "Confirm negative-value conversion",
+                        (
+                            f"The source contains {aggregation.negative_count:,} "
+                            "negative transactions totaling "
+                            f"${abs(aggregation.negative_total):,.2f}.\n\n"
+                            "Setting these values to zero excludes refunds and "
+                            "cancellations before quarterly aggregation. The forecast "
+                            "will represent gross demand and may overforecast net "
+                            "demand. Net quarterly aggregation is recommended.\n\n"
+                            "Continue with the zero-conversion override?"
+                        ),
+                        icon="warning",
+                        parent=self,
+                    )
+                    if not confirmed:
+                        self.status_var.set(
+                            "Forecast cancelled; negative transactions were not changed."
+                        )
+                        return
+                selected_data = aggregation.data
+            else:
+                period_column = (
+                    None
+                    if not first_column or first_column == ROW_ORDER_OPTION
+                    else first_column
+                )
+                selected_data = select_forecast_columns(
+                    self.app_state.raw_data,
+                    period_column=period_column,
+                    demand_column=second_column,
+                )
             result = fit_static_forecast(
                 selected_data,
                 periodicity=periodicity,
@@ -370,16 +455,17 @@ class ForecastingApp(tk.Tk):
                 result.data.to_csv(self.app_state.output_csv_path, index=False)
                 saved_items.append(f"CSV: {self.app_state.output_csv_path}")
 
-            if self.app_state.plot_path is not None:
-                from src.data.plotting import plot_static_forecast
+            from src.data.plotting import plot_static_forecast
+            from src.ui.chart_window import ForecastChartWindow
 
+            if self.app_state.plot_path is not None:
                 self.app_state.plot_path.parent.mkdir(parents=True, exist_ok=True)
-                figure = plot_static_forecast(
-                    result,
-                    output_path=self.app_state.plot_path,
-                )
-                figure.clear()
                 saved_items.append(f"Plot: {self.app_state.plot_path}")
+            figure = plot_static_forecast(
+                result,
+                output_path=self.app_state.plot_path,
+            )
+            ForecastChartWindow(self, figure)
 
             factors = ", ".join(
                 f"S{season}={factor:.4f}"
@@ -389,6 +475,31 @@ class ForecastingApp(tk.Tk):
                 f"Forecast complete. Level={result.level:,.2f}; "
                 f"trend={result.trend:,.2f}. {factors}"
             )
+            if aggregation is not None:
+                aggregation_status = (
+                    f"Aggregated {aggregation.transaction_count:,} transactions into "
+                    f"{len(aggregation.data):,} calendar quarters."
+                )
+                if aggregation.negative_count:
+                    if aggregation.negative_policy == NEGATIVE_POLICY_NET:
+                        aggregation_status += (
+                            f" Included {aggregation.negative_count:,} negative "
+                            "transactions totaling "
+                            f"-${abs(aggregation.negative_total):,.2f} in net totals."
+                        )
+                    else:
+                        aggregation_status += (
+                            f" Converted {aggregation.negative_count:,} negative "
+                            "transactions totaling "
+                            f"-${abs(aggregation.negative_total):,.2f} to zero; these "
+                            "are gross totals."
+                        )
+                if aggregation.missing_quarters_filled:
+                    aggregation_status += (
+                        f" Filled {aggregation.missing_quarters_filled:,} missing "
+                        "quarters with zero demand."
+                    )
+                status = aggregation_status + "\n" + status
             if saved_items:
                 status += "\n" + "\n".join(saved_items)
             self.status_var.set(status)
@@ -399,15 +510,43 @@ class ForecastingApp(tk.Tk):
 
     def _configure_column_selectors(self, columns: list[object]) -> None:
         column_names = [str(column) for column in columns]
-        self.period_column_box.configure(
-            values=[ROW_ORDER_OPTION, *column_names],
-            state="readonly",
-        )
+        if self.data_mode_var.get() == RAW_DATA_MODE:
+            self.period_column_box.configure(values=column_names, state="readonly")
+            self.period_column_var.set(
+                self._suggest_column(column_names, ("date", "time", "period"))
+            )
+            demand_keywords = (
+                "amount",
+                "amt",
+                "demand",
+                "sales",
+                "volume",
+                "value",
+            )
+        else:
+            self.period_column_box.configure(
+                values=[ROW_ORDER_OPTION, *column_names],
+                state="readonly",
+            )
+            self.period_column_var.set(ROW_ORDER_OPTION)
+            demand_keywords = ("demand", "sales", "volume", "value", "amount", "amt")
         self.demand_column_box.configure(values=column_names, state="readonly")
-        self.period_column_var.set(ROW_ORDER_OPTION)
         self.demand_column_var.set(
-            self._suggest_column(column_names, ("demand", "sales", "volume", "value"))
+            self._suggest_column(column_names, demand_keywords)
         )
+
+    def _on_data_mode_changed(self, _event: object | None = None) -> None:
+        if self.data_mode_var.get() == RAW_DATA_MODE:
+            self.raw_options_content.pack(fill="x", pady=(0, 13))
+            self.period_column_label.configure(text="Transaction date column")
+            self.demand_column_label.configure(text="Transaction amount column")
+        else:
+            self.raw_options_content.pack_forget()
+            self.period_column_label.configure(text="Period column (optional)")
+            self.demand_column_label.configure(text="Select demand column")
+
+        if self.app_state.raw_data is not None:
+            self._configure_column_selectors(list(self.app_state.raw_data.columns))
 
     def _disable_column_selectors(self) -> None:
         self.period_column_var.set("")
