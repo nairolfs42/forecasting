@@ -52,17 +52,6 @@ cd forecasting
 Create a local virtual environment and install the dependencies:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-The included setup script performs the same steps and prints CLI help when it
-finishes. Source the script so the virtual environment remains active in the
-current terminal:
-
-```bash
 source ./setup.sh
 ```
 
@@ -77,8 +66,6 @@ python -m pip install -r requirements.txt
 
 If `py -3.12` is unavailable but Python 3 is installed, use `py -3` instead.
 
-Do not commit `.venv`. Virtual environments contain machine-specific paths and
-should be recreated from `requirements.txt` on each computer.
 
 ## Basic GUI usage
 
@@ -103,6 +90,12 @@ Use the application as follows:
 
 The horizon is the number of future periods to generate. For example, a horizon
 of `4` produces four future quarterly estimates.
+
+
+A basic sample you could run would be a static forecast on test_data_1.csv with a horizon of 4
+and periodicity of 4 to get another years forecast on the sample quarterly data. 
+
+![sample of GUI](testimg.png)
 
 ### Already aggregated data
 

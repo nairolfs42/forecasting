@@ -4,9 +4,13 @@ __pycache__/
 *$py.class
 
 
+# ds store 
+.DS_Store
+
+
 
 # png output for charts 
-*.png
+#*.png
 
 # C extensions
 *.so
